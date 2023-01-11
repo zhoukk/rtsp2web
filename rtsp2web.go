@@ -27,6 +27,7 @@ type Stream struct {
 	EnableAudio bool
 	EnableDebug bool
 	Running     bool
+	ExitC       chan struct{}
 	Codecs      []av.CodecData
 	Viewers     map[string]Viewer
 }
@@ -35,6 +36,8 @@ type Rtsp2Web struct {
 	streams map[string]Stream
 	lock    sync.RWMutex
 }
+
+var ErrRtspDisconnect = errors.New("rtsp disconnected")
 
 func (g *Rtsp2Web) hasViewer(id string) bool {
 	g.lock.Lock()
@@ -130,8 +133,8 @@ func (g *Rtsp2Web) exist(id string) bool {
 	return ok
 }
 
-func (g *Rtsp2Web) work(id, url string, enableAudio, enableDebug bool) error {
-	RTSPClient, err := rtspv2.Dial(rtspv2.RTSPClientOptions{URL: url, DisableAudio: !enableAudio, DialTimeout: 3 * time.Second, ReadWriteTimeout: 3 * time.Second, Debug: enableDebug})
+func (g *Rtsp2Web) work(id string, s *Stream) error {
+	RTSPClient, err := rtspv2.Dial(rtspv2.RTSPClientOptions{URL: s.Url, DisableAudio: !s.EnableAudio, DialTimeout: 3 * time.Second, ReadWriteTimeout: 3 * time.Second, Debug: s.EnableDebug})
 	if err != nil {
 		return err
 	}
@@ -146,18 +149,20 @@ func (g *Rtsp2Web) work(id, url string, enableAudio, enableDebug bool) error {
 
 	for {
 		select {
+		case <-s.ExitC:
+			return fmt.Errorf("[%s] stream exit while delete stream", id)
 		case <-viewerTimeout.C:
 			if !g.hasViewer(id) {
-				return fmt.Errorf("stream %s exit while no viewer", id)
+				return fmt.Errorf("[%s] stream exit while no viewer", id)
 			}
 		case <-clientTimeout.C:
-			return fmt.Errorf("stream %s exit while no video", id)
+			return fmt.Errorf("[%s] stream exit while no keyframe", id)
 		case signals := <-RTSPClient.Signals:
 			switch signals {
 			case rtspv2.SignalCodecUpdate:
 				g.setCodec(id, RTSPClient.CodecData)
 			case rtspv2.SignalStreamRTPStop:
-				return fmt.Errorf("stream %s exit while rtsp disconnect", id)
+				return ErrRtspDisconnect
 			}
 		case packetAV := <-RTSPClient.OutgoingPacketQueue:
 			if packetAV.IsKeyFrame {
@@ -174,14 +179,11 @@ func (g *Rtsp2Web) start(id string) {
 	if s, ok := g.streams[id]; ok && !s.Running {
 		s.Running = true
 		g.streams[id] = s
-		go func(id, url string, enableAudio, enableDebug bool) {
+		go func(id string, s *Stream) {
 			for {
-				err := g.work(id, url, enableAudio, enableDebug)
-				if err != nil {
+				err := g.work(id, s)
+				if err != ErrRtspDisconnect {
 					log.Println(err)
-				}
-				if !g.hasViewer(id) {
-					log.Printf("stream %s exit while no viewer\n", id)
 					break
 				}
 				time.Sleep(1 * time.Second)
@@ -192,7 +194,7 @@ func (g *Rtsp2Web) start(id string) {
 				s.Running = false
 				g.streams[id] = s
 			}
-		}(id, s.Url, s.EnableAudio, s.EnableDebug)
+		}(id, &s)
 	}
 }
 
@@ -206,7 +208,6 @@ func (g *Rtsp2Web) WebRtcHander() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.FormValue("id")
 		if !g.exist(id) {
-			log.Printf("stream %s not exist\n", id)
 			http.Error(w, "Stream Not Exist", http.StatusNotFound)
 			return
 		}
@@ -215,7 +216,6 @@ func (g *Rtsp2Web) WebRtcHander() http.Handler {
 
 		codecs := g.getCodec(id)
 		if codecs == nil {
-			log.Printf("stream %s no codec\n", id)
 			http.Error(w, "Stream No Codec", http.StatusInternalServerError)
 			return
 		}
@@ -225,7 +225,6 @@ func (g *Rtsp2Web) WebRtcHander() http.Handler {
 		muxerWebRTC := webrtc.NewMuxer(webrtc.Options{})
 		answer, err := muxerWebRTC.WriteHeader(codecs, string(sdp))
 		if err != nil {
-			log.Println(err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -240,14 +239,14 @@ func (g *Rtsp2Web) WebRtcHander() http.Handler {
 			for {
 				select {
 				case <-noVideoTimeout.C:
-					log.Println("key frame timeout")
+					log.Printf("[%s] stream exit while no keyframe\n", id)
 					return
 				case pkt := <-ch:
 					if pkt.IsKeyFrame {
 						noVideoTimeout.Reset(60 * time.Second)
 					}
 					if err = muxerWebRTC.WritePacket(pkt); err != nil {
-						log.Println(err)
+						log.Printf("[%s] stream exit while write packet:%s\n", id, err.Error())
 						return
 					}
 				}
@@ -262,7 +261,7 @@ func (g *Rtsp2Web) WsMp4fHander() websocket.Handler {
 
 		id := ws.Request().FormValue("id")
 		if !g.exist(id) {
-			log.Printf("stream %s not exist\n", id)
+			log.Printf("[%s] Stream Not Exist\n", id)
 			return
 		}
 
@@ -270,7 +269,7 @@ func (g *Rtsp2Web) WsMp4fHander() websocket.Handler {
 
 		codecs := g.getCodec(id)
 		if codecs == nil {
-			log.Printf("stream %s no codec\n", id)
+			log.Printf("[%s] Stream No Codec\n", id)
 			return
 		}
 
@@ -314,7 +313,7 @@ func (g *Rtsp2Web) WsMp4fHander() websocket.Handler {
 		for {
 			select {
 			case <-noVideoTimeout.C:
-				log.Println("key frame timeout")
+				log.Printf("[%s] stream exit while no keyframe\n", id)
 				return
 			case pkt := <-ch:
 				if pkt.IsKeyFrame {
@@ -330,7 +329,7 @@ func (g *Rtsp2Web) WsMp4fHander() websocket.Handler {
 					}
 					err := websocket.Message.Send(ws, buf)
 					if err != nil {
-						log.Println(err)
+						log.Printf("[%s] stream exit while write packet:%s\n", id, err.Error())
 						return
 					}
 				}
@@ -349,9 +348,22 @@ func (g *Rtsp2Web) AddStream(id, url string, enable_audio bool) error {
 			Url:         url,
 			EnableAudio: false,
 			EnableDebug: false,
+			ExitC:       make(chan struct{}),
 			Codecs:      make([]av.CodecData, 0),
 			Viewers:     make(map[string]Viewer),
 		}
 	}
 	return nil
+}
+
+func (g *Rtsp2Web) RemoveStream(id string) {
+	g.lock.Lock()
+	defer g.lock.Unlock()
+	if s, ok := g.streams[id]; ok {
+		if s.Running {
+			s.ExitC <- struct{}{}
+		}
+		close(s.ExitC)
+		delete(g.streams, id)
+	}
 }
