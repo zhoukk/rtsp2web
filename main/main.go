@@ -13,6 +13,7 @@ func main() {
 	r2w := rtsp2web.NewRtsp2Web()
 
 	r2w.AddStream("live", "rtsp://192.168.1.3:554/live", false)
+	r2w.Start("live")
 
 	http.Handle("/", http.FileServer(http.Dir("web")))
 	http.Handle("/web/", http.FileServer(http.Dir("../")))

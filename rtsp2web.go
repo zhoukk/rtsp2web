@@ -173,7 +173,7 @@ func (g *Rtsp2Web) work(id string, s *Stream) error {
 	}
 }
 
-func (g *Rtsp2Web) start(id string) {
+func (g *Rtsp2Web) Start(id string) {
 	g.lock.Lock()
 	defer g.lock.Unlock()
 	if s, ok := g.streams[id]; ok && !s.Running {
@@ -212,7 +212,7 @@ func (g *Rtsp2Web) WebRtcHander() http.Handler {
 			return
 		}
 
-		g.start(id)
+		g.Start(id)
 
 		codecs := g.getCodec(id)
 		if codecs == nil {
@@ -265,7 +265,7 @@ func (g *Rtsp2Web) WsMp4fHander() websocket.Handler {
 			return
 		}
 
-		g.start(id)
+		g.Start(id)
 
 		codecs := g.getCodec(id)
 		if codecs == nil {
