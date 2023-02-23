@@ -23,6 +23,7 @@ type Config struct {
 		ICEServers    []string
 		ICEUsername   string
 		ICECredential string
+		ICECandidates []string
 		WebRTCPortMin uint16
 		WebRTCPortMax uint16
 	}
@@ -238,6 +239,7 @@ func (g *Rtsp2Web) WebRtcHander() http.Handler {
 			ICEServers:    g.config.WebRtc.ICEServers,
 			ICEUsername:   g.config.WebRtc.ICEUsername,
 			ICECredential: g.config.WebRtc.ICECredential,
+			ICECandidates: g.config.WebRtc.ICECandidates,
 			PortMin:       g.config.WebRtc.WebRTCPortMin,
 			PortMax:       g.config.WebRtc.WebRTCPortMax,
 		})

@@ -11,6 +11,7 @@ import (
 func main() {
 
 	cfg := rtsp2web.Config{}
+	// cfg.WebRtc.ICECandidates = []string{"192.168.1.2"}
 	// cfg.WebRtc.WebRTCPortMin = 50010
 	// cfg.WebRtc.WebRTCPortMax = 50020
 	r2w := rtsp2web.NewRtsp2Web(cfg)
