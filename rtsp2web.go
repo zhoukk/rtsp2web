@@ -18,6 +18,16 @@ import (
 	"golang.org/x/net/websocket"
 )
 
+type Config struct {
+	WebRtc struct {
+		ICEServers    []string
+		ICEUsername   string
+		ICECredential string
+		WebRTCPortMin uint16
+		WebRTCPortMax uint16
+	}
+}
+
 type Viewer struct {
 	c chan av.Packet
 }
@@ -33,6 +43,7 @@ type Stream struct {
 }
 
 type Rtsp2Web struct {
+	config  Config
 	streams map[string]Stream
 	lock    sync.RWMutex
 }
@@ -198,8 +209,9 @@ func (g *Rtsp2Web) Start(id string) {
 	}
 }
 
-func NewRtsp2Web() *Rtsp2Web {
+func NewRtsp2Web(config Config) *Rtsp2Web {
 	return &Rtsp2Web{
+		config:  config,
 		streams: make(map[string]Stream),
 	}
 }
@@ -222,7 +234,13 @@ func (g *Rtsp2Web) WebRtcHander() http.Handler {
 
 		sdp, _ := ioutil.ReadAll(r.Body)
 
-		muxerWebRTC := webrtc.NewMuxer(webrtc.Options{})
+		muxerWebRTC := webrtc.NewMuxer(webrtc.Options{
+			ICEServers:    g.config.WebRtc.ICEServers,
+			ICEUsername:   g.config.WebRtc.ICEUsername,
+			ICECredential: g.config.WebRtc.ICECredential,
+			PortMin:       g.config.WebRtc.WebRTCPortMin,
+			PortMax:       g.config.WebRtc.WebRTCPortMax,
+		})
 		answer, err := muxerWebRTC.WriteHeader(codecs, string(sdp))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)

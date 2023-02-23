@@ -10,7 +10,10 @@ import (
 
 func main() {
 
-	r2w := rtsp2web.NewRtsp2Web()
+	cfg := rtsp2web.Config{}
+	// cfg.WebRtc.WebRTCPortMin = 50010
+	// cfg.WebRtc.WebRTCPortMax = 50020
+	r2w := rtsp2web.NewRtsp2Web(cfg)
 
 	r2w.AddStream("live", "rtsp://192.168.1.3:554/live", false)
 	r2w.Start("live")
