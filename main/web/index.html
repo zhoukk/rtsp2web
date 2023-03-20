@@ -1,11 +1,41 @@
 <html>
 
 <body>
-    <video width="600" id="video1" autoplay muted controls></video>
-    <video width="600" id="video2" autoplay muted controls></video>
+    <table>
+        <tr>
+            <td>
+                webrtc:
+            </td>
+            <td>
+                <video width="600" id="video1" autoplay muted controls></video>
+            </td>
+            <td>
+                wsmp4f:
+            </td>
+            <td>
+                <video width="600" id="video2" autoplay muted controls></video>
+            </td>
+        </tr>
+        <tr>
+            <td>
+                wsflv:
+            </td>
+            <td>
+                <video width="600" id="video3" autoplay muted controls></video>
+            </td>
+            <td>
+                httpflv:
+            </td>
+            <td>
+                <video width="600" id="video4" autoplay muted controls></video>
+            </td>
+        </tr>
+    </table>
 </body>
+<script type="text/javascript" src="flv.min.js"></script>
 <script type="text/javascript" src="../web/webrtc.js"></script>
 <script type="text/javascript" src="../web/wsmp4f.js"></script>
+<script type="text/javascript" src="../web/flv.js"></script>
 <script type="text/javascript" src="app.js"></script>
 
 </html>

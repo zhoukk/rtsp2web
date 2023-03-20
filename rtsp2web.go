@@ -1,6 +1,7 @@
 package rtsp2web
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/deepch/vdk/av"
 	"github.com/deepch/vdk/codec/h264parser"
+	"github.com/deepch/vdk/format/flv"
 	"github.com/deepch/vdk/format/mp4f"
 	"github.com/deepch/vdk/format/rtspv2"
 	webrtc "github.com/deepch/vdk/format/webrtcv3"
@@ -327,7 +329,63 @@ func (g *Rtsp2Web) WsMp4fHander() websocket.Handler {
 			}
 		}()
 
-		timeLine := make(map[int8]time.Duration)
+		noVideoTimeout := time.NewTimer(60 * time.Second)
+		for {
+			select {
+			case <-noVideoTimeout.C:
+				log.Printf("[%s] stream exit while no keyframe\n", id)
+				return
+			case pkt := <-ch:
+				if pkt.IsKeyFrame {
+					noVideoTimeout.Reset(60 * time.Second)
+				}
+				if ready, buf, _ := muxer.WritePacket(pkt, false); ready {
+					err = ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
+					if err != nil {
+						log.Println(err)
+						return
+					}
+					err := websocket.Message.Send(ws, buf)
+					if err != nil {
+						log.Printf("[%s] stream exit while write packet:%s\n", id, err.Error())
+						return
+					}
+				}
+			}
+		}
+	})
+}
+
+func (g *Rtsp2Web) HttpFlvHander() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := r.FormValue("id")
+		if !g.exist(id) {
+			http.Error(w, "Stream Not Exist", http.StatusNotFound)
+			return
+		}
+
+		g.Start(id)
+
+		codecs := g.getCodec(id)
+		if codecs == nil {
+			http.Error(w, "Stream No Codec", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "video/x-flv")
+		w.Header().Set("Transfer-Encoding", "chunked")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.WriteHeader(200)
+
+		vid, ch := g.addViewer(id)
+		defer g.delViewer(id, vid)
+
+		fMux := flv.NewMuxer(w)
+		err := fMux.WriteHeader(codecs)
+		if err != nil {
+			log.Println(err)
+			return
+		}
 
 		noVideoTimeout := time.NewTimer(60 * time.Second)
 		for {
@@ -339,15 +397,81 @@ func (g *Rtsp2Web) WsMp4fHander() websocket.Handler {
 				if pkt.IsKeyFrame {
 					noVideoTimeout.Reset(60 * time.Second)
 				}
-				timeLine[pkt.Idx] += pkt.Duration
-				pkt.Time = timeLine[pkt.Idx]
-				if ready, buf, _ := muxer.WritePacket(pkt, false); ready {
+				if err := fMux.WritePacket(pkt); err != nil {
+					log.Printf("[%s] stream exit while write packet:%s\n", id, err.Error())
+					return
+				}
+			}
+		}
+	})
+}
+
+func (g *Rtsp2Web) WsFlvHander() websocket.Handler {
+	return websocket.Handler(func(ws *websocket.Conn) {
+		defer ws.Close()
+
+		id := ws.Request().FormValue("id")
+		if !g.exist(id) {
+			log.Printf("[%s] Stream Not Exist\n", id)
+			return
+		}
+
+		g.Start(id)
+
+		codecs := g.getCodec(id)
+		if codecs == nil {
+			log.Printf("[%s] Stream No Codec\n", id)
+			return
+		}
+
+		ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
+
+		vid, ch := g.addViewer(id)
+		defer g.delViewer(id, vid)
+
+		var b bytes.Buffer
+
+		muxer := flv.NewMuxer(&b)
+		err := muxer.WriteHeader(codecs)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		err = websocket.Message.Send(ws, b.Bytes())
+		if err != nil {
+			log.Println(err)
+			return
+		}
+
+		go func() {
+			for {
+				var message string
+				err := websocket.Message.Receive(ws, &message)
+				if err != nil {
+					ws.Close()
+					return
+				}
+			}
+		}()
+
+		noVideoTimeout := time.NewTimer(60 * time.Second)
+		for {
+			select {
+			case <-noVideoTimeout.C:
+				log.Printf("[%s] stream exit while no keyframe\n", id)
+				return
+			case pkt := <-ch:
+				if pkt.IsKeyFrame {
+					noVideoTimeout.Reset(60 * time.Second)
+				}
+				b.Reset()
+				if err := muxer.WritePacket(pkt); err == nil {
 					err = ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
 					if err != nil {
 						log.Println(err)
 						return
 					}
-					err := websocket.Message.Send(ws, buf)
+					err := websocket.Message.Send(ws, b.Bytes())
 					if err != nil {
 						log.Printf("[%s] stream exit while write packet:%s\n", id, err.Error())
 						return

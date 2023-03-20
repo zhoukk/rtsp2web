@@ -51,5 +51,9 @@ func main() {
 
 	http.Handle("/stream/ws", r2w.WsMp4fHander())
 
-	http.ListenAndServe(":8080", nil)
+	http.Handle("/stream/httpflv", r2w.HttpFlvHander())
+
+	http.Handle("/stream/wsflv", r2w.WsFlvHander())
+
+	log.Println(http.ListenAndServe(":8010", nil))
 }
